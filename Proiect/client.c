@@ -11,7 +11,6 @@
 #define BUFFER_SIZE 1024
 
 
-
 // functie creare socket
 int createSocket() 
 {
@@ -23,6 +22,39 @@ int createSocket()
     }
     return socketfd;
 }
+
+int sendType(int socket_fd)
+{
+    char type[2];
+    strcpy(type, "C");
+    type[sizeof(type) - 1] = '\0';
+
+    int rc = send(socket_fd, type, strlen(type), 0);
+    if (rc < 0) {
+        printf("Client %d: Error sending type.\n", socket_fd);
+        close(socket_fd);
+        return 0;
+    }
+
+    char receivBufffer[4];
+    int bytesReceived = recv(socket_fd, receivBufffer, 3, 0);
+    if (bytesReceived <= 0) {
+        printf("Client %d: Error receiving ACK or connection closed.\n", socket_fd);
+        close(socket_fd);
+        return 0;
+    }
+    receivBufffer[bytesReceived] = '\0';
+
+    if (strcmp(receivBufffer, "ACK") != 0) {
+        printf("Client %d: Unexpected response: %s\n", socket_fd, receivBufffer);
+        close(socket_fd);
+        return 0;
+    }
+
+    return 1;
+}
+
+
 // functie cerere conexiune la server
 void connectToServer(int socketfd, struct sockaddr_in *server_addr) 
 {
@@ -42,14 +74,23 @@ void connectToServer(int socketfd, struct sockaddr_in *server_addr)
         close(socketfd);
         exit(EXIT_FAILURE);
     }
-    printf("Connected to server.\n");
+    else
+    {
+        int verify=sendType(socketfd);
+        if(verify)
+        {
+            printf("Client %d: Connected to server.\n", socketfd);
+        }
+        else
+        {
+            exit(EXIT_FAILURE);
+        }
+    }
 }
 // functie trimitere task
+
 void sendTask(int socketfd,int argc,char* argv[])
 {
-    char type = 'C';
-    send(socketfd, &type, sizeof(type), 0);
-
     char buffer[BUFFER_SIZE];
     strcpy(buffer,argv[1]);
 
@@ -59,9 +100,28 @@ void sendTask(int socketfd,int argc,char* argv[])
         strcat(buffer,argv[i]);
     }
 
-    send(socketfd, buffer, strlen(buffer), 0);
-    printf("File request sent: %s\n", argv[2]);
+    int rc=send(socketfd, buffer, strlen(buffer), 0);
+    if(rc<0)
+    {
+        printf("Client: %d Error send args.", socketfd);
+        exit(EXIT_FAILURE);
+    }
 
+    char receivBufffer[4]; // msj ACK
+    recv(socketfd, receivBufffer, 3, 0);
+    if(strcmp(receivBufffer, "ACK")!=0)
+    {
+        printf("Agent %d: Error receive ACK in function sendTask.\n", socketfd);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void sendFile(int socketfd, char* argv[])
+{
+    char buffer[BUFFER_SIZE];
+
+    char fileName[30];
+    strcpy(fileName, argv[2]);
     int fd = open(argv[2],O_RDONLY);
     if(fd == -1)
     {
@@ -95,7 +155,6 @@ void sendTask(int socketfd,int argc,char* argv[])
     }
 }
 // functie primire raspuns 
-
 int main(int argc,char* argv[])
 {
     int socketfd = createSocket();
@@ -103,7 +162,8 @@ int main(int argc,char* argv[])
     connectToServer(socketfd,server_addr);
     printf("%s\n",argv[2]);
     sendTask(socketfd,argc,argv);
-
+    sendFile(socketfd, argv);
+    
     close(socketfd);
 
     return 0;

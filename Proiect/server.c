@@ -141,6 +141,7 @@ void parseBuffer(Task* task,char* buffer)
 
     p = strtok(NULL," ");
     strcpy(task->fileName,p);
+    task->fileName[strlen(p)]='\0';
 
     p = strtok(NULL," ");
     int argument = 0;
@@ -151,10 +152,7 @@ void parseBuffer(Task* task,char* buffer)
         task->args[contor++] = argument;
         p = strtok(NULL," ");
     }
-
 }
-
-
 
 int receiveDataFile(int socket,char* filename,int id)
 {
@@ -162,7 +160,9 @@ int receiveDataFile(int socket,char* filename,int id)
     char strID[5];
     sprintf(strID,"_%d",id);
     
-    strcat(filename,strID);
+    char fileLocal[100];
+    strcpy(fileLocal, filename);
+    strcat(fileLocal,strID);
     int fd = open(filename,O_CREAT | O_RDWR,0644);
     if(fd == -1)
     {
@@ -183,6 +183,7 @@ int receiveDataFile(int socket,char* filename,int id)
     {
         dimFile += bytes_recv;
         rc = write(fd,buffer,bytes_recv);
+        printf("SUnt aici");
         if(rc == -1)
         {
             perror("write in receiveDataFIle");
@@ -206,10 +207,19 @@ void processClientTask(Task *task)
     // primim un buffer cu argumente
     char buffer[BUFFER_SIZE];
     recv(task->client->socketfd, &buffer, BUFFER_SIZE, 0); // primim argumentele
-    task = createTask(task,buffer);
-    printf("Processed client %d request for file: %s\n", task->client->idClient, task->fileName);
-    enqueue(&agentQueue,task);
-    dequeue(&clientQueue);
+    int rc=send(task->client->socketfd, "ACK", 3, 0);
+    if(rc<0)
+    {
+        printf("Client: %d Error send ACK in function processClientTask.", task->client->socketfd);
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        task = createTask(task,buffer);
+        printf("Processed client %d request for file: %s \n", task->client->idClient, task->fileName);
+        enqueue(&agentQueue,task);
+        dequeue(&clientQueue);
+    }
     //free(task);
 }
 
@@ -298,6 +308,7 @@ int main(int argc,char* argv[])
         recv(new_socket, &type, sizeof(type), 0);
         if (type == 'C')
         {
+            int rc=send(new_socket, "ACK", 3, 0);
             printf("Client connected.\n");
 
             Task *task = (Task *)malloc(sizeof(Task));
@@ -307,6 +318,7 @@ int main(int argc,char* argv[])
         else if (type == 'A')
         {
             printf("Agent connected.\n");
+            int rc=send(new_socket, "ACK", 3, 0);
         }
     }
 
