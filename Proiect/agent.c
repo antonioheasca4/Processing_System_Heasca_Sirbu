@@ -44,9 +44,31 @@ int sendType(int socket_fd)
     return 1;
 }
 
+int sendTaskType(int socket_fd, char * argv)
+{
+    int rc=send(socket_fd, argv, strlen(argv), 0);
+    if(rc <0)
+    {
+        printf("Agent %d: Error send task type.\n", socket_fd);
+        close(socket_fd);
+        return 0;
+    }
+
+    char receivBufffer[3]; // msj ACK
+    recv(socket_fd, receivBufffer, 3, 0);
+    if(strcmp(receivBufffer, "ACK"))
+    {
+        printf("Agent %d: Error receive ACK.\n", socket_fd);
+        close(socket_fd);
+        return 0;
+    }
+
+    return 1;
+}
+
 
 // functie cerere conexiune la server
-void connectToServer(int socket_fd, struct sockaddr_in* server_addr)
+void connectToServer(int socket_fd, struct sockaddr_in* server_addr, char * argv)
 {
     server_addr->sin_family=AF_INET;
     server_addr->sin_port=htons(SERVER_PORT);
@@ -70,6 +92,7 @@ void connectToServer(int socket_fd, struct sockaddr_in* server_addr)
         if(verify)
         {
             printf("Agent %d: Connected to server.\n", socket_fd);
+            sendTaskType(socket_fd, argv);
         }
         else
         {
@@ -89,11 +112,11 @@ void recvTask()
 
 //functie trimitere raspuns catre server
 
-int main() 
+int main(int argc, char* argv[]) 
 {
     int socket_fd=createSocket();
     struct sockaddr_in *server_addr;
-    connectToServer(socket_fd, server_addr);
+    connectToServer(socket_fd, server_addr, argv);
 
 
     close(socket_fd);
