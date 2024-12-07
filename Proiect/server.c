@@ -59,6 +59,10 @@ typedef struct
 
 TaskQueue clientQueue, agentQueue;
 
+typedef struct
+{
+    Agent *front, *rear;
+}AgentQueue;
 
 void initQueue(TaskQueue *queue)
 {
@@ -163,7 +167,7 @@ int receiveDataFile(int socket,char* filename,int id)
     char fileLocal[100];
     strcpy(fileLocal, filename);
     strcat(fileLocal,strID);
-    int fd = open(filename,O_CREAT | O_RDWR,0644);
+    int fd = open(fileLocal,O_CREAT | O_RDWR,0644);
     if(fd == -1)
     {
         perror("open in receiveDataFIle");
@@ -317,8 +321,10 @@ int main(int argc,char* argv[])
         }
         else if (type == 'A')
         {
-            printf("Agent connected.\n");
             int rc=send(new_socket, "ACK", 3, 0);
+            printf("Client connected.\n");
+
+            
         }
     }
 

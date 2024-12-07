@@ -30,7 +30,8 @@ int sendType(int socket_fd)
     type[sizeof(type) - 1] = '\0';
 
     int rc = send(socket_fd, type, strlen(type), 0);
-    if (rc < 0) {
+    if (rc < 0) 
+    {
         printf("Client %d: Error sending type.\n", socket_fd);
         close(socket_fd);
         return 0;
@@ -38,14 +39,16 @@ int sendType(int socket_fd)
 
     char receivBufffer[4];
     int bytesReceived = recv(socket_fd, receivBufffer, 3, 0);
-    if (bytesReceived <= 0) {
+    if (bytesReceived <= 0) 
+    {
         printf("Client %d: Error receiving ACK or connection closed.\n", socket_fd);
         close(socket_fd);
         return 0;
     }
     receivBufffer[bytesReceived] = '\0';
 
-    if (strcmp(receivBufffer, "ACK") != 0) {
+    if (strcmp(receivBufffer, "ACK") != 0) 
+    {
         printf("Client %d: Unexpected response: %s\n", socket_fd, receivBufffer);
         close(socket_fd);
         return 0;
@@ -143,7 +146,7 @@ void sendFile(int socketfd, char* argv[])
             rc = send(socketfd,buffer,bytes_read,0);
             if(rc == -1)
             {
-                perror("write in receiveDataFIle");
+                perror("send in sendFile");
                 exit(EXIT_FAILURE);
             }
         }
@@ -154,7 +157,29 @@ void sendFile(int socketfd, char* argv[])
         printf("Server didn't send the ready\n");
     }
 }
+
+
 // functie primire raspuns 
+void receiveResponseFromServer()
+{
+    int rc;
+    char buffer[BUFFER_SIZE];
+    int bytes_recv;
+    
+
+    while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,0)) > 0)
+    {
+    
+        rc = write(STDOUT_FILENO,buffer,bytes_recv);
+        if(rc == -1)
+        {
+            perror("write in receiveResponseFromServer");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
+
 int main(int argc,char* argv[])
 {
     int socketfd = createSocket();
