@@ -160,7 +160,7 @@ void sendFile(int socketfd, char* argv[])
 
 
 // functie primire raspuns 
-void receiveResponseFromServer()
+void receiveResponseFromServer(int socket)
 {
     int rc;
     char buffer[BUFFER_SIZE];
@@ -183,8 +183,8 @@ void receiveResponseFromServer()
 int main(int argc,char* argv[])
 {
     int socketfd = createSocket();
-    struct sockaddr_in *server_addr;
-    connectToServer(socketfd,server_addr);
+    struct sockaddr_in server_addr;
+    connectToServer(socketfd,&server_addr);
     printf("%s\n",argv[2]);
     sendTask(socketfd,argc,argv);
     sendFile(socketfd, argv);

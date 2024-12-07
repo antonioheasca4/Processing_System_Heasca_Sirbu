@@ -261,6 +261,18 @@ int createSocket(int port)
 }
 
 // functie handle client
+void sendResponseToClient(Task *task, const char *result) 
+{
+    int bytes_sent = send(task->client->socketfd, result, strlen(result), 0);
+    if (bytes_sent <= 0) 
+    {
+        perror("Server: Failed to send response to client.");
+    } 
+    else 
+    {
+        printf("Server: Response sent to client %d.\n", task->client->idClient);
+    }
+}
 
 
 // functie handle agent
