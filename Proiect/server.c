@@ -65,14 +65,10 @@ typedef struct
     pthread_cond_t cond;
 } TaskQueue;
 
-TaskQueue clientQueue, agentTaskQueue;
+static TaskQueue taskQueue;
 
-typedef struct
+void initializeQueueAgent(AgentQueue queue) 
 {
-    Agent *front, *rear;
-}AgentQueue;
-
-void initializeQueueAgent(AgentQueue queue) {
     queue.front = NULL;
     queue.rear = NULL;
 }
@@ -87,6 +83,7 @@ void initQueue(TaskQueue *queue)
 void enqueue(TaskQueue *queue, Task* task)
 {
     pthread_mutex_lock(&queue->lock);
+    pthread_t tid = pthread_self();
     if (queue->rear == NULL)
     {
         queue->front = queue->rear = task;
@@ -96,6 +93,7 @@ void enqueue(TaskQueue *queue, Task* task)
         queue->rear->next = task;
         queue->rear = task;
     }
+     printf("Task pentru clientul %d a fost adăugat în coadă. TID = %lu\n", task->client->idClient,tid);
     pthread_cond_signal(&queue->cond);
     pthread_mutex_unlock(&queue->lock);
 }
@@ -103,11 +101,19 @@ void enqueue(TaskQueue *queue, Task* task)
 Task *dequeue(TaskQueue *queue)
 {
     pthread_mutex_lock(&queue->lock);
+    pthread_t tid = pthread_self();
+
+    if (queue->front == NULL) 
+    {
+        printf("TaskQueue este goală. TID = %lu\n",tid);
+    }
+
     while (queue->front == NULL)
     {
         pthread_cond_wait(&queue->cond, &queue->lock);
     }
     Task *task = queue->front;
+    printf("Task pentru clientul %d a fost extras din coadă de TID = %lu.\n", task->client->idClient,tid);
     queue->front = queue->front->next;
     if (queue->front == NULL)
     {
@@ -122,22 +128,25 @@ typedef struct
     pthread_t threads[THREAD_POOL_SIZE];
     TaskQueue *queue;
     void (*processTask)(Task*);
-    // pthread_mutex_t lock;
-    // pthread_cond_t signal;
 } ThreadPool;
 
 void *worker(void *p)
 {
     ThreadPool* pool = (ThreadPool*) p;
-    while (1)
+    while(1)
     {
         Task *task = dequeue(pool->queue);
         pool->processTask(task);
     }
+        
+    
     return NULL;
 }
 
-void initThreadPool(ThreadPool *pool, TaskQueue *queue, void (*process_task)(Task *))
+
+
+
+void initThreadPool(ThreadPool *pool, TaskQueue* queue, void (*process_task)(Task *))
 {
     pool->queue = queue;
     pool->processTask = process_task;
@@ -145,8 +154,6 @@ void initThreadPool(ThreadPool *pool, TaskQueue *queue, void (*process_task)(Tas
     {
         pthread_create(&pool->threads[i], NULL, worker, pool);
     }
-    
-    //pthread_mutex_init(&pool->lock,NULL);
 }
 
 void parseBuffer(Task* task,char* buffer)
@@ -200,7 +207,6 @@ int receiveDataFile(int socket,char* filename,int id)
     {
         dimFile += bytes_recv;
         rc = write(fd,buffer,bytes_recv);
-        printf("SUnt aici");
         if(rc == -1)
         {
             perror("write in receiveDataFIle");
@@ -213,7 +219,6 @@ int receiveDataFile(int socket,char* filename,int id)
 
 Task* createTask(Task* task,char* buffer)
 {
-    //Task* task = (Task*)malloc(sizeof(Task));
     parseBuffer(task,buffer);
     task->dimFile = receiveDataFile(task->client->socketfd,task->fileName,task->client->idClient);
     return task;
@@ -223,7 +228,7 @@ void processClientTask(Task *task)
 {
     // primim un buffer cu argumente
     char buffer[BUFFER_SIZE];
-    recv(task->client->socketfd, &buffer, BUFFER_SIZE, 0); // primim argumentele
+    int bytes_received = recv(task->client->socketfd, &buffer, BUFFER_SIZE, 0); // primim argumentele
     int rc=send(task->client->socketfd, "ACK", 3, 0);
     if(rc<0)
     {
@@ -231,56 +236,68 @@ void processClientTask(Task *task)
         exit(EXIT_FAILURE);
     }
     else
+    if(bytes_received > 0)
     {
         task = createTask(task,buffer);
         printf("Processed client %d request for file: %s \n", task->client->idClient, task->fileName);
-        enqueue(&agentTaskQueue,task);
-        dequeue(&clientQueue);
+        enqueue(&taskQueue,task);
+        printf("enqueued\n");
+        //dequeue(&taskQueue);
     }
-    //free(task);
 }
 
-void processAgentTask(ThreadPool* agentQueue)
+void processAgentTask(Task *task)
 {
-    // int rc;
-    // char strID[5];
-    // sprintf(strID,"_%d",task->agent->idAgent);
-    // char fileLocal[100];
-    // strcpy(fileLocal, task->fileName);
-    // strcat(fileLocal,strID);
-    // int fd = open(fileLocal, O_RDONLY,0644);
-    // if(fd == -1)
-    // {
-    //     perror("open in receiveDataFIle");
-    //     exit(EXIT_FAILURE);
-    // }   
+    Agent* currentAgent=agentQueue.front;
+    
 
-    // char buffer[BUFFER_SIZE];
+    while(currentAgent)
+    {
+        if(currentAgent->isBusy==0)
+            break;
+        currentAgent=currentAgent->next;
 
-    // int bytes_read,rc;
-    // strcpy(buffer,"\0");
+    }
 
-    // //hardcodat 6 => abstractizare dimensiune buffer trimis de server
-    // char buff_ready[7];
-    // recv(task.,buff_ready,6,0);
-    // if(strcmp(buff_ready,"Ready?") == 0)
-    // {
-    //     while((bytes_read = read(fd,buffer,BUFFER_SIZE)) > 0)
-    //     {
-    //         //sleep(5);
-    //         rc = send(socketfd,buffer,bytes_read,0);
-    //         if(rc == -1)
-    //         {
-    //             perror("write in receiveDataFIle");
-    //             exit(EXIT_FAILURE);
-    //         }
-    //     }
-    // }
-    // else
-    // {
-    //     printf("%s\n",buffer);
-    //     printf("Server didn't send the ready\n");
-    // }
+    int rc;
+    char strID[5];
+    sprintf(strID,"_%d",task->agent->idAgent);
+    char fileLocal[100];
+    strcpy(fileLocal, task->fileName);
+    strcat(fileLocal,strID);
+    int fd = open(fileLocal, O_RDONLY,0644);
+    if(fd == -1)
+    {
+        perror("open in processAgentTask");
+        exit(EXIT_FAILURE);
+    }   
+
+    char buffer[BUFFER_SIZE];
+
+    int bytes_read;
+    strcpy(buffer,"\0");
+
+    //hardcodat 6 => abstractizare dimensiune buffer trimis de server
+    char buff_ready[7];
+    recv(currentAgent->socketfd,buff_ready,6,0);
+    if(strcmp(buff_ready,"Ready?") == 0)
+    {
+        while((bytes_read = read(fd,buffer,BUFFER_SIZE)) > 0)
+        {
+            //sleep(5);
+            rc = send(currentAgent->socketfd,buffer,bytes_read,0);
+            if(rc == -1)
+            {
+                perror("write in receiveDataFIle");
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    else
+    {
+        printf("%s\n",buffer);
+        printf("Server didn't send the ready\n");
+    }
 
 }
 
@@ -377,16 +394,31 @@ void addAgentInQueue(Agent* newAgent, AgentQueue queue)
 {
     newAgent->next = NULL;
 
-    // Dacă coada este goală
     if (queue.rear == NULL) {
         queue.front = newAgent;
         queue.rear = newAgent;
     } else {
-        // Adăugare la sfârșitul cozii
+        
         queue.rear->next = newAgent;
         queue.rear = newAgent;
     }
 
+}
+
+
+void debugTaskQueue(TaskQueue *queue) {
+    pthread_mutex_lock(&queue->lock); // Protejează accesul cu mutex
+    Task *current = queue->front;
+    if (!current) {
+        printf("TaskQueue este goală.\n");
+    } else {
+        printf("Conținutul TaskQueue:\n");
+        while (current) {
+            printf("Task: clientId=%d\n", current->client->idClient);
+            current = current->next;
+        }
+    }
+    pthread_mutex_unlock(&queue->lock);
 }
 
 
@@ -395,21 +427,22 @@ int main(int argc,char* argv[])
    int serverSocket = createSocket(PORT);
 
     // initializare task queue-uri
-    initQueue(&clientQueue);
-    initQueue(&agentTaskQueue);
-    initializeQueueAgent(agentTaskQueue);
+    initQueue(&taskQueue);
+    initQueue(&taskQueue);
+    initializeQueueAgent(agentQueue);
 
     // initializare threadpool-uri
     ThreadPool clientPool, agentPool;
-    initThreadPool(&clientPool, &clientQueue, processClientTask);
-    initThreadPool(&agentPool, &agentTaskQueue, processAgentTask);
+    initThreadPool(&clientPool, &taskQueue, processClientTask);
+    //initThreadPool(&agentPool, &agentQueue, processAgentTask);
 
-    printf("Server is listening on port %d\n", PORT);
+    printf("Server is listening on port %d. TID = %lu\n", PORT,pthread_self());
 
     struct sockaddr_in* client_addr;
     socklen_t addr_len = sizeof(client_addr);
     while (1)
     {
+        //debugTaskQueue(&taskQueue);
         int new_socket = accept(serverSocket, (struct sockaddr *)&client_addr, &addr_len);
         if (new_socket < 0) 
         {
@@ -431,8 +464,6 @@ int main(int argc,char* argv[])
         else if (type == 'A')
         {
             int rc=send(new_socket, "ACK", 3, 0);
-            printf("Client connected.\n");
-
             
             printf("Agent connected.\n");
 
