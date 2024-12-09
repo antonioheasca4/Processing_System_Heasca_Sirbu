@@ -9,16 +9,17 @@
 #include <fcntl.h>
 
 #define MAX_ARGS 5
-#define MAX_NR_TASKS 10
-#define MAX_NR_AGENTS 10
-#define MAX_NR_CLIENTS 10
-#define PORT 8080
+#define PORT_CLIENT 8080
+#define PORT_AGENT 9090
 #define BUFFER_SIZE 1024
 #define QUEUE_SIZE 10
 #define THREAD_POOL_SIZE 5
 
 static int idClient = 0;
 static int idAgent = 0;
+
+pthread_mutex_t client_accept_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t agent_accept_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
 
@@ -77,13 +78,20 @@ typedef struct
 {
     pthread_t threads[THREAD_POOL_SIZE];
     void *queue;
-    void (*processTask)(Task*);
+    void (*processTask)(void*);
     int serverSocket;
     struct sockaddr_in client_addr;
     socklen_t addr_len;
 } ThreadPool;
 
-void initQueue(TaskQueue *queue)
+void initTaskQueue(TaskQueue *queue)
+{
+    queue->front =  NULL;
+    pthread_mutex_init(&queue->lock, NULL);
+    pthread_cond_init(&queue->cond, NULL);
+}
+
+void initAgentQueue(AgentQueue* queue)
 {
     queue->front =  NULL;
     pthread_mutex_init(&queue->lock, NULL);
@@ -102,7 +110,6 @@ void enqueue(TaskQueue *queue, Task* task)
     pthread_cond_broadcast(&queue->cond);
     pthread_mutex_unlock(&queue->lock);
 }
-
 
 
 void parseBuffer(Task* task,char* buffer)
@@ -225,8 +232,10 @@ void freeTask(Task *task)
 }
 
 
-void processClientTask(Task *task)
+void processClientTask(void *t)
 {
+    Task* task = (Task*) t;
+
     // primim un buffer cu argumente
     char buffer[BUFFER_SIZE];
     int bytes_received = recv(task->client->socketfd, &buffer, BUFFER_SIZE, 0); // primim argumentele
@@ -295,7 +304,9 @@ void *workerClient(void *p)
 
     while (1)
     {
+        pthread_mutex_lock(&client_accept_lock);
         int new_socket = accept(pool->serverSocket, (struct sockaddr *)&pool->client_addr, &pool->addr_len);
+        pthread_mutex_unlock(&client_accept_lock);
         if (new_socket < 0) 
         {
             perror("accept socket");
@@ -322,9 +333,15 @@ void *workerClient(void *p)
             printf("Client connected.\n");
 
             Task *task = (Task *)malloc(sizeof(Task));
+            task->agent = NULL;
             task->client = createClient(new_socket);
             task->isReady = 0;
-            processClientTask(task);
+            pool->processTask(task);
+        }
+        else
+        {
+            close(new_socket);
+            continue;
         }
     }
 }
@@ -344,7 +361,9 @@ void *workerAgent(void *p)
 
     while (1)
     {
+        pthread_mutex_lock(&agent_accept_lock);
         int agent_socket = accept(pool->serverSocket, (struct sockaddr *)&pool->client_addr, &pool->addr_len);
+        pthread_mutex_unlock(&agent_accept_lock);
         if (agent_socket < 0)
         {
             perror("accept agent socket");
@@ -360,16 +379,26 @@ void *workerAgent(void *p)
             continue;
         }
 
-        printf("Agent connected.\n");
-
         if(type == 'A')
         {
+            int rc = send(agent_socket, "ACK", 3, 0);
+            if(rc < 0)
+            {
+                printf("Client: %d Error send ACK in function workerAgent.", agent_socket);
+                close(agent_socket);
+                continue;
+            }
+
+            printf("Agent connected.\n");
+
             Agent *agent = (Agent *)malloc(sizeof(Agent));
             agent->idAgent = idAgent++;
             agent->socketfd = agent_socket;
             agent->isBusy = 0;
-
-            bytes_received = (agent_socket, &agent->taskType, sizeof(agent->taskType), 0);
+            agent->task = NULL;
+            
+            char buff[2];
+            bytes_received = recv(agent_socket, buff, 1, 0);
             if (bytes_received <= 0) 
             {
                 perror("Eroare taskType al agentului\n");
@@ -377,8 +406,25 @@ void *workerAgent(void *p)
                 continue;
             }
 
+            agent->taskType = atoi(buff);
+
+            rc = send(agent_socket, "ACK", 3, 0);
+            if(rc < 0)
+            {
+                printf("Client: %d Error send ACK in function workerAgent.", agent_socket);
+                close(agent_socket);
+                continue;
+            }
+
             addAgentToQueue(&agentQueue,agent);
+
+            pool->processTask(agent);
         } 
+        else
+        {
+            close(agent_socket);
+            continue;
+        }
     }
 }
 
@@ -437,7 +483,7 @@ void processAgentResult(Agent *agent)
 }
 
 
-void initThreadClientPool(ThreadPool *pool, TaskQueue* queue, void (*process_task)(Task *),int serverSocket)
+void initThreadClientPool(ThreadPool *pool, TaskQueue* queue, void (*process_task)(void *),int serverSocket)
 {
     pool->queue = queue;
     pool->processTask = process_task;
@@ -450,16 +496,42 @@ void initThreadClientPool(ThreadPool *pool, TaskQueue* queue, void (*process_tas
     }
 }
 
-void initThreadAgentPool(ThreadPool *pool, AgentQueue* queue, void (*process_task)(Task *),int serverSocket)
+void debugAgentQueue(AgentQueue *queue) 
+{
+    pthread_mutex_lock(&queue->lock); 
+    Agent *current = queue->front;
+    if (!current) 
+    {
+        printf("AgentQueue este goală.\n");
+    } 
+    else 
+    {
+        printf("Continutul AgentQueue:\n");
+        while (current) 
+        {
+            printf("Agent: agentID=%d  taskType=%d\n",current->idAgent,current->taskType);
+            current = current->next;
+        }
+    }
+    pthread_mutex_unlock(&queue->lock);
+}
+
+void processAgent(void* a)
+{
+    Agent* agent = (Agent*)a;
+    debugAgentQueue(&agentQueue);
+}
+
+void initThreadAgentPool(ThreadPool *pool, AgentQueue* queue, void (*process_Agent)(void *),int serverSocket)
 {
     pool->queue = queue;
-    pool->processTask = process_task;
+    pool->processTask = process_Agent;
     pool->serverSocket = serverSocket;
     pool->addr_len = sizeof(pool->client_addr);
 
     for (int i = 0; i < THREAD_POOL_SIZE; i++)
     {
-        pthread_create(&pool->threads[i], NULL, workerClient, pool);
+        pthread_create(&pool->threads[i], NULL, workerAgent, pool);
     }
 }
 
@@ -479,22 +551,33 @@ void sendResponseToClient(Task *task, const char *result)
 
 int main(int argc,char* argv[])
 {
-   int serverSocket = createSocket(PORT);
+    int clientSocket = createSocket(PORT_CLIENT);
+    int agentSocket = createSocket(PORT_AGENT);
 
-    // initializare task queue-uri
-    initQueue(&taskQueue);
+    initTaskQueue(&taskQueue);
+    initAgentQueue(&agentQueue);
 
-    // initializare threadpool-uri
+
     ThreadPool clientPool;
-    initThreadClientPool(&clientPool, &taskQueue, processClientTask,serverSocket);
+    initThreadClientPool(&clientPool, &taskQueue, processClientTask,clientSocket);
 
-    printf("Server is listening on port %d. TID = %lu\n", PORT,pthread_self());
+    ThreadPool agentPool;
+    initThreadAgentPool(&agentPool,&agentQueue,processAgent,agentSocket);
+
+    printf("Server is listening on port %d for CLIENTS. TID = %lu\n", PORT_CLIENT,pthread_self());
+    printf("Server is listening on port %d for AGENTS. TID = %lu\n", PORT_AGENT,pthread_self());
 
     for (int i = 0; i < THREAD_POOL_SIZE; i++) 
     {
         pthread_join(clientPool.threads[i], NULL);
     }
 
-    close(serverSocket);
+    for (int i = 0; i < THREAD_POOL_SIZE; i++) 
+    {
+        pthread_join(agentPool.threads[i], NULL);
+    }
+
+    close(clientSocket);
+    close(agentSocket);
     return 0;
 }
