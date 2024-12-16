@@ -8,6 +8,7 @@
 #include <asm-generic/socket.h>
 #include <fcntl.h>
 
+
 #define MAX_ARGS 5
 #define PORT_CLIENT 8080
 #define PORT_AGENT 9090
@@ -58,7 +59,7 @@ typedef struct Agent
 
 typedef struct
 {
-    Agent* front;
+    Agent* front, *tail;
     pthread_mutex_t lock;
     pthread_cond_t cond;
 }AgentQueue;
@@ -143,11 +144,13 @@ int receiveDataFile(int socket,char* filename,int id)
     int rc;
     char strID[5];
     sprintf(strID,"_%d",id);
-    
+
+
+
     char fileLocal[100];
-    strcpy(fileLocal, filename);
-    strcat(fileLocal,strID);
-    int fd = open(fileLocal,O_CREAT | O_RDWR,0644);
+    // strcpy(fileLocal, filename);
+    strcat(filename,strID);
+    int fd = open(filename,O_CREAT | O_RDWR,0644);
     if(fd == -1)
     {
         perror("open in receiveDataFIle");
@@ -231,6 +234,151 @@ void freeTask(Task *task)
     }
 }
 
+void sendFileToAgent(Task* task)
+{
+    char buffer[BUFFER_SIZE];
+
+    char fileName[30];
+    strcpy(fileName, task->fileName);
+    int fd = open(fileName,O_RDONLY);
+    if(fd == -1)
+    {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+
+    int bytes_read,rc;
+    strcpy(buffer,"\0");
+    while((bytes_read = read(fd,buffer,BUFFER_SIZE)) > 0)
+    {
+        rc = send(task->agent->socketfd,buffer,bytes_read,0);
+        if(rc == -1)
+        {
+            perror("send in sendFileToAgent.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+}
+void sendArgsToAgent(Task* task)
+{
+    char buffer[BUFFER_SIZE];
+    strcpy(buffer, "\0");
+    for(int i=0; task->args[i]!=-1; i++)
+    {
+        char buf[5];
+        sprintf(buf, "%d", task->args[i]);
+        buf[strlen(buf)]='\0';
+        strcat(buffer, buf);
+        strcat(buffer, " ");
+    }
+    printf("Argumente: %s\n", buffer);
+
+    int rc=send(task->agent->socketfd, buffer, strlen(buffer), 0);
+    if(rc<0)
+    {
+        printf("Error send args to agent.");
+        exit(EXIT_FAILURE);
+    }
+
+    char receivBufffer[4]; // msj ACK
+    int bytes_received =recv(task->agent->socketfd, receivBufffer, BUFFER_SIZE - 1, 0);
+    receivBufffer[bytes_received] = '\0'; 
+    if(strcmp(receivBufffer, "ACK")!=0)
+    {
+        printf("Agent %d: Error receive ACK.\n", task->agent->socketfd);
+        close(task->agent->socketfd);
+        exit(EXIT_FAILURE);
+    }
+
+}
+void sendTaskToAgent(Task* task)
+{
+    int socket_fd=task->agent->socketfd;
+    char argsBuffer[5];
+    strcpy(argsBuffer, "ARGS");
+    int rc=send(socket_fd, argsBuffer, strlen(argsBuffer), 0);
+    if(rc<0)
+    {
+        printf("Error send args buffer.\n");
+        close(socket_fd);
+        exit(EXIT_FAILURE);
+    }
+    else{
+        char receivBufffer[4]; // msj ACK
+        int bytes_received =recv(socket_fd, receivBufffer, BUFFER_SIZE - 1, 0);
+        receivBufffer[bytes_received] = '\0'; 
+        if(strcmp(receivBufffer, "ACK")!=0)
+        {
+            printf("Agent %d: Error receive ACK.\n", socket_fd);
+            close(socket_fd);
+            exit(EXIT_FAILURE);
+        }
+        else
+        {
+            sendArgsToAgent(task);
+        }
+    }
+
+    char fileBuffer[10];
+    strcpy(fileBuffer, "DATA_FILE");
+    int rc1=send(socket_fd, fileBuffer, strlen(fileBuffer), 0);
+    if(rc1<0)
+    {
+        printf("Error send args buffer.\n");
+        close(socket_fd);
+        exit(EXIT_FAILURE);
+    }
+    else{
+        char receivBufffer[4]; // msj ACK
+        int bytes_received =recv(socket_fd, receivBufffer, BUFFER_SIZE - 1, 0);
+        receivBufffer[bytes_received] = '\0'; 
+        if(strcmp(receivBufffer, "ACK")!=0)
+        {
+            printf("Agent %d: Error receive ACK.\n", socket_fd);
+            close(socket_fd);
+            exit(EXIT_FAILURE);
+        }
+        else
+        {
+            // sendArgsToAgent(task);
+            sendFileToAgent(task);
+        }
+        
+    }
+}
+
+void assignTaskToAgent(Task *task)
+{
+    int ok=0;
+    pthread_mutex_lock(&agentQueue.lock);
+    Agent* currentAgent=agentQueue.front;
+
+    if(currentAgent!=NULL)
+    {
+        while(currentAgent!=NULL)
+        {
+            if(currentAgent->isBusy==0 && currentAgent->taskType>=task->taskType)
+            {
+                currentAgent->isBusy=1; 
+                task->agent=currentAgent;
+
+                pthread_mutex_unlock(&agentQueue.lock);
+
+
+                sendTaskToAgent(task);
+                ok=1;
+            }
+            currentAgent=currentAgent->next;
+        }
+    }
+
+    pthread_mutex_unlock(&agentQueue.lock);
+
+    if(ok==0)
+        printf("No available agents for task type %d.\n", task->taskType);
+}
+
 
 void processClientTask(void *t)
 {
@@ -254,6 +402,8 @@ void processClientTask(void *t)
         printf("Processed client %d request for file: %s \n", task->client->idClient, task->fileName);
         enqueue(&taskQueue,task);
         debugTaskQueue(&taskQueue);
+        //aici trebuie sa apelez functia de asignareTaskToAggent
+        assignTaskToAgent(task);
     }
 }
 
@@ -349,8 +499,17 @@ void *workerClient(void *p)
 void addAgentToQueue(AgentQueue* agentQueue, Agent *agent)
 {
     pthread_mutex_lock(&(agentQueue->lock));
-    agent->next = agentQueue->front;
-    agentQueue->front = agent;
+    if(agentQueue->front==NULL)
+    {
+        agentQueue->front=agent;
+        agentQueue->tail=agent;
+    }
+    else
+    {
+        agentQueue->tail->next=agent;
+        agentQueue->tail=agentQueue->tail->next;
+    }
+    agentQueue->tail->next = NULL;
     pthread_cond_broadcast(&(agentQueue->cond));
     pthread_mutex_unlock(&(agentQueue->lock));
 }
@@ -427,41 +586,6 @@ void *workerAgent(void *p)
         }
     }
 }
-
-
-void assignTaskToAgent(Task *task)
-{
-    pthread_mutex_lock(&agentQueue.lock);
-    Agent *prev = NULL, *curr = agentQueue.front;
-
-    while (curr)
-    {
-        if (!curr->isBusy && curr->taskType == task->taskType)
-        {
-            curr->isBusy = 1;
-            task->agent = curr;
-
-            // Remove agent from queue temporarily
-            if (prev)
-                prev->next = curr->next;
-            else
-                agentQueue.front = curr->next;
-
-            pthread_mutex_unlock(&agentQueue.lock);
-
-            // Send task to agent
-            send(curr->socketfd, &task, sizeof(Task), 0);
-            printf("Task sent to Agent %d\n", curr->idAgent);
-            return;
-        }
-        prev = curr;
-        curr = curr->next;
-    }
-    pthread_mutex_unlock(&agentQueue.lock);
-
-    printf("No available agents for task type %d.\n", task->taskType);
-}
-
 
 void processAgentResult(Agent *agent)
 {

@@ -1,14 +1,15 @@
 all: server agent client
 
 server: server.c
-	gcc server.c -o server
+	gcc -g server.c -o server
 
 agent: agent.c
-	gcc agent.c -o agent
+	gcc -g agent.c -o agent
 
 client: client.c
-	gcc client.c -o client
+	gcc -g client.c -o client
 
 clean:
 	rm -f server agent client
 	rm file_*
+	rm task_file*

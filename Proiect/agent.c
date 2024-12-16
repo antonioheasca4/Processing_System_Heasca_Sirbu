@@ -60,7 +60,9 @@ int sendType(int socket_fd)
 
 int sendTaskType(int socket_fd, char ** argv)
 {
-    int rc=send(socket_fd, argv[1], strlen(argv[1]), 0);
+
+    // int rc=send(socket_fd, argv[1], strlen(argv[1]), 0);
+    int rc=send(socket_fd, "2", 1, 0);
     if(rc <0)
     {
         printf("Agent %d: Error send task type.\n", socket_fd);
@@ -118,11 +120,12 @@ void parseBuffer(Task* task,char* buffer)
 {
     char* p = strtok(buffer," ");
 
-    p = strtok(NULL," ");
-    strcpy(task->fileName,p);
-    task->fileName[strlen(p)]='\0';
+    task->args[0]=0;
+    task->args[1]=0;
+    task->args[2]=0;
+    task->args[3]=0;
+    task->args[4]=0;
 
-    p = strtok(NULL," ");
     int argument = 0;
     int contor=0;
     while(p)
@@ -136,18 +139,20 @@ void parseBuffer(Task* task,char* buffer)
 void receiveArgs(int socket_fd, Task* task)
 {
     char buffer[BUFFER_SIZE];
-    int bytes_received;
-
-    while ((bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0)) > 0)
-    {
-        buffer[bytes_received] = '\0'; 
+    
+    int bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
+    buffer[bytes_received] = '\0'; 
+    if(bytes_received)
         printf("Agent %d: Args received.\n", socket_fd);
 
+    int rc = send(socket_fd, "ACK", 3, 0);
+    if(rc < 0)
+    {
+        printf("Error send ACK in function waitForMessage:");
+        exit(EXIT_FAILURE);
     }
 
-    if (bytes_received < 0) {
-        perror("recv");
-    }
+    printf("Argumente: %s\n", buffer);
 
     parseBuffer(task, buffer);
 }
@@ -163,6 +168,8 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     char fileLocal[100];
     strcpy(fileLocal, filename);
     strcat(fileLocal,strID);
+    strcat(fileLocal, ".c");
+    strcpy(task->fileName, fileLocal);
     int fd = open(fileLocal,O_CREAT | O_RDWR,0644);
     if(fd == -1)
     {
@@ -171,7 +178,7 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     }
     char buffer[BUFFER_SIZE];
     int dimFile = 0;
-    int bytes_recv;
+    int bytes_recv=0;
     rc = send(socket,"Ready?",6,0);
     if(rc == -1)
     {
@@ -179,17 +186,17 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
         exit(EXIT_FAILURE);
     }
 
-    while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,0)) > 0)
+    while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,MSG_DONTWAIT)) > 0)
     {
         dimFile += bytes_recv;
         rc = write(fd,buffer,bytes_recv);
         if(rc == -1)
         {
             perror("write in receiveDataFIle");
-             exit(EXIT_FAILURE);
+            exit(EXIT_FAILURE);
         }
     }
-
+        
     strcpy(task->fileName, fileLocal);
     task->dimFile=dimFile;
 
@@ -197,42 +204,115 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
 }
 
 //functie executare task
-void executeTask(Task * task)
+void executeTask(Task *task)
 {
-    if (task == NULL) {
-        fprintf(stderr, "Eroare: Task-ul este NULL.\n");
+    if (task == NULL || task->fileName == NULL) {
+        fprintf(stderr, "Eroare: Task-ul sau numele fișierului este NULL.\n");
         return;
-   }
+    }
 
     char *argList[MAX_ARGS + 2];
-    argList[0] = task->fileName; 
+    argList[0] = task->fileName;
+
     for (int i = 0; i < MAX_ARGS && task->args[i] != 0; i++) {
-        static char argBuffer[MAX_ARGS][BUFFER_SIZE];
-        snprintf(argBuffer[i], BUFFER_SIZE, "%d", task->args[i]);
-        argList[i + 1] = argBuffer[i]; 
+        argList[i + 1] = malloc(BUFFER_SIZE);
+        if (argList[i + 1] == NULL) {
+            fprintf(stderr, "Eroare la alocarea memoriei pentru argumente.\n");
+            for (int j = 1; j <= i; j++) {
+                free(argList[j]);
+            }
+            return;
+        }
+        snprintf(argList[i + 1], BUFFER_SIZE, "%d", task->args[i]);
     }
     argList[MAX_ARGS + 1] = NULL; 
 
     pid_t pid = fork();
-    if (pid < 0) {
+    if (pid < 0) 
+    {
         perror("Eroare la fork");
-        return;
+        for (int i = 1; argList[i] != NULL; i++) 
+        {
+            free(argList[i]);
+        }
+        exit(EXIT_FAILURE);
     }
 
-    if (pid == 0) {
-        execvp(task->fileName, argList);
-        perror("Eroare la execvp");
+    char execName[100];
+    char cpy[100];
+    strcpy(cpy, task->fileName);
+    char* p=strtok(cpy, ".");
+    strcpy(execName, cpy);
+    strcat(execName, "_exec");
+    if (pid == 0)
+    { 
+        char* gccArgs[] = {"gcc", task->fileName, "-o", execName, NULL};
+
+        printf("Compilare: %s -> %s. \n", task->fileName, execName);
+        printf("gcc\n");
+        for (int i = 0; gccArgs[i] != NULL; i++)
+            printf("%s \n", gccArgs[i]);
+
+        execvp("gcc", gccArgs);
+
+        perror("Eroare la execvp pentru gcc");
         exit(EXIT_FAILURE);
-    } else {
-        int status;
-        waitpid(pid, &status, 0); 
-        if (WIFEXITED(status)) {
-            printf("Procesul s-a terminat cu codul de ieșire %d\n", WEXITSTATUS(status));
-        } else {
-            fprintf(stderr, "Procesul s-a terminat anormal.\n");
-        }
     }
+
+    int status;
+    wait(&status);
+
+    if (WIFEXITED(status)) {
+        printf("Procesul gcc s-a terminat normal.\n");
+        if (WEXITSTATUS(status) == 0) {
+            printf("Compilare reușită!\n");
+        } else {
+            fprintf(stderr, "Eroare la compilare, cod de ieșire gcc: %d\n", WEXITSTATUS(status));
+        }
+    } else if (WIFSIGNALED(status)) {
+        printf("Procesul gcc a fost terminat de semnalul: %d\n", WTERMSIG(status));
+    } else {
+        printf("Procesul gcc s-a terminat într-un mod neașteptat.\n");
+    }
+
+    // if (WIFEXITED(status) && WEXITSTATUS(status) == 0) 
+    // {
+    //     printf("Compilare reușită!\n");
+
+    //     pid_t pid2=fork();
+
+    //     if(pid2<0)
+    //     {
+    //         perror("Eroare la fork.\n");
+    //         exit(EXIT_FAILURE);
+    //     }
+
+    //     if(pid2==0)
+    //     {
+    //         char fileNameLocal[100];
+    //         strcpy(fileNameLocal, execName);
+    //         strcat(fileNameLocal, "_out");
+    //         int fd = open(fileNameLocal, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    //         if (fd < 0) {
+    //             perror("Eroare la deschiderea fișierului de ieșire");
+    //             exit(EXIT_FAILURE);
+    //         }
+    //         if (dup2(fd, STDOUT_FILENO) < 0 || dup2(fd, STDERR_FILENO) < 0) {
+    //             perror("Eroare la redirecționarea ieșirii");
+    //             close(fd);
+    //             exit(EXIT_FAILURE);
+    //         }
+
+    //         close(fd); 
+    //         printf("Bianca");
+
+    //         execvp(execName, argList);
+    //         perror("Eroare la execvp");
+    //         exit(EXIT_FAILURE); 
+    //     }
+    //}
 }
+
 
 void waitForMessage(int socket_fd)
 {
@@ -240,29 +320,52 @@ void waitForMessage(int socket_fd)
     int bytes_received;
     char* args;
     Task * task;
+    int ok=0;
 
     printf("Agent %d: Waiting for message from server...\n", socket_fd);
 
-     while ((bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0)) > 0) {
-        buffer[bytes_received] = '\0'; 
-        printf("Agent %d: Message received: %s\n", socket_fd, buffer);
-        task= (Task*)malloc(sizeof(Task*));
-        if (strcmp(buffer, "ARGS") == 0) {
-            printf("Agent %d: Receiving arguments...\n", socket_fd);
-            receiveArgs(socket_fd, task);
-        } else if (strcmp(buffer, "DATA_FILE") == 0) {
-            printf("Agent %d: Receiving data file...\n", socket_fd);
-            receiveDataFile(socket_fd, "task_file_", ID, task);
-            ID++;
-            printf("Agent %d: Received data file.\n", socket_fd);
-        } else if (strcmp(buffer, "EXIT") == 0) {
-            printf("Agent %d: Server requested exit. Closing connection.\n", socket_fd);
-            break;
-        } else {
-            printf("Agent %d: Unknown message: %s\n", socket_fd, buffer);
+     while(ok==0)
+        { 
+            int bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
+            buffer[bytes_received] = '\0'; 
+            printf("Agent %d: Message received: %s\n", socket_fd, buffer);
+            
+            if (strcmp(buffer, "ARGS") == 0) 
+            {
+                printf("Agent %d: Receiving arguments...\n", socket_fd);
+                int rc = send(socket_fd, "ACK", 3, 0);
+                if(rc < 0)
+                {
+                    printf("Error send ACK in function waitForMessage:");
+                    exit(EXIT_FAILURE);
+                }
+                else
+                {
+                    receiveArgs(socket_fd, task);
+                }
+            }
+            else if (strcmp(buffer, "DATA_FILE") == 0) 
+            {
+                printf("Agent %d: Receiving data file...\n", socket_fd);
+                int rc = send(socket_fd, "ACK", 3, 0);
+                if(rc < 0)
+                {
+                    printf("Error send ACK in function waitForMessage: DATA_FILE.");
+                    exit(EXIT_FAILURE);
+                }
+                else{
+                    receiveDataFile(socket_fd, "task_file_", ID, task);
+                    ok=1;
+                }
+                ID++;
+                printf("Agent %d: Received data file.\n", socket_fd);
+            } 
+            else 
+            {
+                printf("Agent %d: Unknown message: %s\n", socket_fd, buffer);
+            }
         }
-    }
-
+    
     if (bytes_received == 0) {
         printf("Agent %d: Server closed the connection.\n", socket_fd);
     } else if (bytes_received < 0) {
@@ -270,9 +373,7 @@ void waitForMessage(int socket_fd)
     }
 
     executeTask(task);
-
 }
-
 
 //functie trimitere task
 
