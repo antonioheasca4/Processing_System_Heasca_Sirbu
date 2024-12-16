@@ -85,6 +85,8 @@ int sendTaskType(int socket_fd, char ** argv)
 // functie cerere conexiune la server
 void connectToServer(int socket_fd, struct sockaddr_in* server_addr, char **argv)
 {
+    //leak aici
+    server_addr = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in));
     server_addr->sin_family=AF_INET;
     server_addr->sin_port=htons(SERVER_PORT);
 
@@ -116,15 +118,55 @@ void connectToServer(int socket_fd, struct sockaddr_in* server_addr, char **argv
     }
 }
 
+void f()
+{
+    int pid = fork();
+    if (pid == 0)
+    {
+        // Înlocuim procesul curent cu gcc
+        execl("/usr/bin/gcc", "gcc", "task_file_agent0.c", "-o", "task_file_agent0_exec", NULL);
+        
+        // Dacă exec eșuează, afișăm o eroare
+        perror("Eroare la exec");
+        exit(EXIT_FAILURE);
+    }
+    else if (pid > 0)
+    {
+        // Procesul părinte așteaptă procesul copil
+        int status;
+        wait(&status);
+
+        if (WIFEXITED(status))
+        {
+            printf("Procesul copil s-a terminat cu codul de ieșire: %d\n", WEXITSTATUS(status));
+        }
+        else
+        {
+            printf("Procesul copil nu s-a terminat corect.\n");
+        }
+    }
+    else
+    {
+        perror("Eroare la fork");
+        exit(EXIT_FAILURE);
+    }
+}
+
 void parseBuffer(Task* task,char* buffer)
 {
+    
     char* p = strtok(buffer," ");
+    
+    
 
+    //f();
     task->args[0]=0;
     task->args[1]=0;
     task->args[2]=0;
     task->args[3]=0;
     task->args[4]=0;
+    
+    
 
     int argument = 0;
     int contor=0;
@@ -155,6 +197,7 @@ void receiveArgs(int socket_fd, Task* task)
     printf("Argumente: %s\n", buffer);
 
     parseBuffer(task, buffer);
+    
 }
 
 
@@ -203,6 +246,8 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     close(fd);
 }
 
+
+
 //functie executare task
 void executeTask(Task *task)
 {
@@ -215,6 +260,7 @@ void executeTask(Task *task)
     argList[0] = task->fileName;
 
     for (int i = 0; i < MAX_ARGS && task->args[i] != 0; i++) {
+        // leak aici
         argList[i + 1] = malloc(BUFFER_SIZE);
         if (argList[i + 1] == NULL) {
             fprintf(stderr, "Eroare la alocarea memoriei pentru argumente.\n");
@@ -227,7 +273,17 @@ void executeTask(Task *task)
     }
     argList[MAX_ARGS + 1] = NULL; 
 
-    pid_t pid = fork();
+
+    char execName[100];
+    char cpy[100];
+    strcpy(cpy, task->fileName);
+    char* p=strtok(cpy, ".");
+    strcpy(execName, cpy);
+    strcat(execName, "_exec");
+
+    //f();
+
+    int pid = fork();
     if (pid < 0) 
     {
         perror("Eroare la fork");
@@ -237,48 +293,41 @@ void executeTask(Task *task)
         }
         exit(EXIT_FAILURE);
     }
-
-    char execName[100];
-    char cpy[100];
-    strcpy(cpy, task->fileName);
-    char* p=strtok(cpy, ".");
-    strcpy(execName, cpy);
-    strcat(execName, "_exec");
-    if (pid == 0)
+    else if (pid == 0)
     { 
         char* gccArgs[] = {"gcc", task->fileName, "-o", execName, NULL};
 
         printf("Compilare: %s -> %s. \n", task->fileName, execName);
-        printf("gcc\n");
+
         for (int i = 0; gccArgs[i] != NULL; i++)
-            printf("%s \n", gccArgs[i]);
+            {
+                printf("%s \n", gccArgs[i]);
+            }
 
 
-        if (access("/usr/bin/gcc", X_OK) != 0) {
-            perror("Eroare: gcc nu este accesibil");
-            exit(EXIT_FAILURE);
-        }
-
-        execvp("gcc", gccArgs);
+        execl("/usr/bin/gcc", "gcc", "task_file_agent0.c", "-o", "task_file_agent0_exec", NULL);
 
         perror("Eroare la execvp pentru gcc");
         exit(EXIT_FAILURE);
     }
 
-    int status;
-    wait(&status);
+    else
+    {
+        int status;
+        wait(&status);
 
-    if (WIFEXITED(status)) {
-        printf("Procesul gcc s-a terminat normal.\n");
-        if (WEXITSTATUS(status) == 0) {
-            printf("Compilare reușită!\n");
+        if (WIFEXITED(status)) {
+            printf("Procesul gcc s-a terminat normal.\n");
+            if (WEXITSTATUS(status) == 0) {
+                printf("Compilare reușită!\n");
+            } else {
+                fprintf(stderr, "Eroare la compilare, cod de ieșire gcc: %d\n", WEXITSTATUS(status));
+            }
+        } else if (WIFSIGNALED(status)) {
+            printf("Procesul gcc a fost terminat de semnalul: %d\n", WTERMSIG(status));
         } else {
-            fprintf(stderr, "Eroare la compilare, cod de ieșire gcc: %d\n", WEXITSTATUS(status));
+            printf("Procesul gcc s-a terminat într-un mod neașteptat.\n");
         }
-    } else if (WIFSIGNALED(status)) {
-        printf("Procesul gcc a fost terminat de semnalul: %d\n", WTERMSIG(status));
-    } else {
-        printf("Procesul gcc s-a terminat într-un mod neașteptat.\n");
     }
 
     // if (WIFEXITED(status) && WEXITSTATUS(status) == 0) 
@@ -323,16 +372,17 @@ void executeTask(Task *task)
 void waitForMessage(int socket_fd)
 {
     char buffer[BUFFER_SIZE];
-    int bytes_received;
+    int bytes_received = 0;
     char* args;
-    Task * task;
+    //leak aici
+    Task * task = (Task* )malloc(sizeof(Task));
     int ok=0;
 
     printf("Agent %d: Waiting for message from server...\n", socket_fd);
 
      while(ok==0)
         { 
-            int bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
+            bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
             buffer[bytes_received] = '\0'; 
             printf("Agent %d: Message received: %s\n", socket_fd, buffer);
             
@@ -359,7 +409,8 @@ void waitForMessage(int socket_fd)
                     printf("Error send ACK in function waitForMessage: DATA_FILE.");
                     exit(EXIT_FAILURE);
                 }
-                else{
+                else
+                { 
                     receiveDataFile(socket_fd, "task_file_", ID, task);
                     ok=1;
                 }
@@ -378,7 +429,10 @@ void waitForMessage(int socket_fd)
         perror("recv");
     }
 
+    
     executeTask(task);
+    free(task);
+
 }
 
 //functie trimitere task
@@ -388,10 +442,11 @@ void waitForMessage(int socket_fd)
 int main(int argc, char* argv[]) 
 {
     int socket_fd=createSocket();
-    struct sockaddr_in *server_addr;
+    struct sockaddr_in *server_addr = NULL;
     connectToServer(socket_fd, server_addr, argv);
     waitForMessage(socket_fd);
 
     close(socket_fd);
+    free(server_addr);
     return 0;
 }

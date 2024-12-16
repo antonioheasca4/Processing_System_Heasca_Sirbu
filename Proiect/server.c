@@ -260,6 +260,7 @@ void sendFileToAgent(Task* task)
     }
     
 }
+
 void sendArgsToAgent(Task* task)
 {
     char buffer[BUFFER_SIZE];
@@ -292,6 +293,7 @@ void sendArgsToAgent(Task* task)
     }
 
 }
+
 void sendTaskToAgent(Task* task)
 {
     int socket_fd=task->agent->socketfd;
@@ -378,7 +380,6 @@ void assignTaskToAgent(Task *task)
     if(ok==0)
         printf("No available agents for task type %d.\n", task->taskType);
 }
-
 
 void processClientTask(void *t)
 {
