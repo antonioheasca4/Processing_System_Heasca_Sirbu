@@ -170,7 +170,7 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     strcat(fileLocal,strID);
     strcat(fileLocal, ".c");
     strcpy(task->fileName, fileLocal);
-    int fd = open(fileLocal,O_CREAT | O_RDWR,0644);
+    int fd = open(fileLocal,O_CREAT | O_RDWR ,0755);
     if(fd == -1)
     {
         perror("open in receiveDataFIle");
@@ -252,6 +252,12 @@ void executeTask(Task *task)
         printf("gcc\n");
         for (int i = 0; gccArgs[i] != NULL; i++)
             printf("%s \n", gccArgs[i]);
+
+
+        if (access("/usr/bin/gcc", X_OK) != 0) {
+            perror("Eroare: gcc nu este accesibil");
+            exit(EXIT_FAILURE);
+        }
 
         execvp("gcc", gccArgs);
 
