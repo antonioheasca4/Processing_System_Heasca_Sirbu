@@ -20,8 +20,8 @@ typedef struct Task
     int args[MAX_ARGS]; // premiza initiala este doar argumente nr intregi
     size_t dimFile; // pentru verificarea integritatii fisierului
     struct Task *next;
+    char fileNameOut[BUFFER_SIZE];
 }Task;
-
 
 
 // functie creare socket
@@ -61,8 +61,8 @@ int sendType(int socket_fd)
 int sendTaskType(int socket_fd, char ** argv)
 {
 
-    // int rc=send(socket_fd, argv[1], strlen(argv[1]), 0);
-    int rc=send(socket_fd, "2", 1, 0);
+    int rc=send(socket_fd, argv[1], strlen(argv[1]), 0);
+    // int rc=send(socket_fd, "2", 1, 0);
     if(rc <0)
     {
         printf("Agent %d: Error send task type.\n", socket_fd);
@@ -200,7 +200,6 @@ void receiveArgs(int socket_fd, Task* task)
     
 }
 
-
 //functie primire task
 int receiveDataFile(int socket,char* filename,int id, Task * task)
 {
@@ -222,13 +221,7 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     char buffer[BUFFER_SIZE];
     int dimFile = 0;
     int bytes_recv=0;
-    rc = send(socket,"Ready?",6,0);
-    if(rc == -1)
-    {
-        perror("READY?");
-        exit(EXIT_FAILURE);
-    }
-
+    
     while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,MSG_DONTWAIT)) > 0)
     {
         dimFile += bytes_recv;
@@ -246,33 +239,38 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     close(fd);
 }
 
+void sendOutToServer(Task* task, int socket_fd)
+{
+    char buffer[BUFFER_SIZE];
+    int fd = open(task->fileNameOut,O_RDONLY);
+    if(fd == -1)
+    {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
 
+    int bytes_read, rc2;
+    strcpy(buffer,"\0");
+    while((bytes_read = read(fd,buffer,BUFFER_SIZE)) > 0)
+    {
+        rc2 = send(socket_fd,buffer,bytes_read,0);
+        if(rc2 == -1)
+        {
+            perror("send in sendFileToAgent.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    rc2 = send(socket_fd,"OK",3,0);
+}
 
 //functie executare task
-void executeTask(Task *task)
+void executeTask(Task *task, int socket_fd)
 {
     if (task == NULL || task->fileName == NULL) {
         fprintf(stderr, "Eroare: Task-ul sau numele fișierului este NULL.\n");
         return;
     }
-
-    char *argList[MAX_ARGS + 2];
-    argList[0] = task->fileName;
-
-    for (int i = 0; i < MAX_ARGS && task->args[i] != 0; i++) {
-        // leak aici
-        argList[i + 1] = malloc(BUFFER_SIZE);
-        if (argList[i + 1] == NULL) {
-            fprintf(stderr, "Eroare la alocarea memoriei pentru argumente.\n");
-            for (int j = 1; j <= i; j++) {
-                free(argList[j]);
-            }
-            return;
-        }
-        snprintf(argList[i + 1], BUFFER_SIZE, "%d", task->args[i]);
-    }
-    argList[MAX_ARGS + 1] = NULL; 
-
 
     char execName[100];
     char cpy[100];
@@ -281,39 +279,24 @@ void executeTask(Task *task)
     strcpy(execName, cpy);
     strcat(execName, "_exec");
 
-    //f();
+
+    int status;
 
     int pid = fork();
     if (pid < 0) 
     {
         perror("Eroare la fork");
-        for (int i = 1; argList[i] != NULL; i++) 
-        {
-            free(argList[i]);
-        }
         exit(EXIT_FAILURE);
     }
     else if (pid == 0)
     { 
-        char* gccArgs[] = {"gcc", task->fileName, "-o", execName, NULL};
-
-        printf("Compilare: %s -> %s. \n", task->fileName, execName);
-
-        for (int i = 0; gccArgs[i] != NULL; i++)
-            {
-                printf("%s \n", gccArgs[i]);
-            }
-
-
-        execl("/usr/bin/gcc", "gcc", "task_file_agent0.c", "-o", "task_file_agent0_exec", NULL);
+        execl("/usr/bin/gcc", "gcc", task->fileName, "-o", execName, NULL);
 
         perror("Eroare la execvp pentru gcc");
         exit(EXIT_FAILURE);
     }
-
     else
     {
-        int status;
         wait(&status);
 
         if (WIFEXITED(status)) {
@@ -330,44 +313,102 @@ void executeTask(Task *task)
         }
     }
 
-    // if (WIFEXITED(status) && WEXITSTATUS(status) == 0) 
-    // {
-    //     printf("Compilare reușită!\n");
+    char *argList[MAX_ARGS];
 
-    //     pid_t pid2=fork();
+    argList[0] = malloc(strlen(execName) + 1);
+    if (argList[0] == NULL) {
+        fprintf(stderr, "Eroare la alocarea memoriei pentru execName.\n");
+        return;
+    }
+    strcpy(argList[0], execName);
 
-    //     if(pid2<0)
-    //     {
-    //         perror("Eroare la fork.\n");
-    //         exit(EXIT_FAILURE);
-    //     }
+    int i;
 
-    //     if(pid2==0)
-    //     {
-    //         char fileNameLocal[100];
-    //         strcpy(fileNameLocal, execName);
-    //         strcat(fileNameLocal, "_out");
-    //         int fd = open(fileNameLocal, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    //         if (fd < 0) {
-    //             perror("Eroare la deschiderea fișierului de ieșire");
-    //             exit(EXIT_FAILURE);
-    //         }
-    //         if (dup2(fd, STDOUT_FILENO) < 0 || dup2(fd, STDERR_FILENO) < 0) {
-    //             perror("Eroare la redirecționarea ieșirii");
-    //             close(fd);
-    //             exit(EXIT_FAILURE);
-    //         }
+    for (i = 1; i < MAX_ARGS && task->args[i-1] != 0; i++) {
+        argList[i] = malloc(BUFFER_SIZE);
+        if (argList[i] == NULL) {
+            fprintf(stderr, "Eroare la alocarea memoriei pentru argumente.\n");
+            for (int j = 0; j < i; j++) {
+                free(argList[j]);
+            }
+            return;
+        }
+        snprintf(argList[i], BUFFER_SIZE, "%d", task->args[i-1]);
+    }
+    
+    argList[i]=NULL;
 
-    //         close(fd); 
-    //         printf("Bianca");
+    char fileNameLocal[100];
 
-    //         execvp(execName, argList);
-    //         perror("Eroare la execvp");
-    //         exit(EXIT_FAILURE); 
-    //     }
-    //}
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) 
+    {
+        printf("Compilare reușită!\n");
+
+        pid_t pid2=fork();
+
+        if(pid2<0)
+        {
+            perror("Eroare la fork.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if(pid2==0)
+        {
+
+            strcpy(fileNameLocal, execName);
+            strcat(fileNameLocal, "_out");
+
+            int fd = open(fileNameLocal, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            
+            if (fd < 0) 
+            {
+                perror("Eroare la deschiderea fișierului de ieșire");
+                exit(EXIT_FAILURE);
+            }
+
+            if (dup2(fd, STDOUT_FILENO) < 0 || dup2(fd, STDERR_FILENO) < 0) {
+                perror("Eroare la redirecționarea ieșirii");
+                close(fd);
+                exit(EXIT_FAILURE);
+            }
+
+            char fileExec[100];
+            strcpy(fileExec, "./");\
+            strcat(fileExec, execName);
+
+            execvp(fileExec, argList);
+
+            perror("Eroare la execvp");
+            exit(EXIT_FAILURE); 
+        }
+        else 
+        {
+            int status2;
+            waitpid(pid2, &status2, 0);
+
+            if (WIFEXITED(status)) 
+            {
+                printf("Procesul executabil s-a terminat normal.\n");
+                if (WEXITSTATUS(status) == 0) {
+                    printf("Executabil reușit!\n");
+                } else {
+                    fprintf(stderr, "Eroare la executie, cod de ieșire: %d\n", WEXITSTATUS(status));
+                }
+            } 
+            else if (WIFSIGNALED(status)) 
+            {
+                printf("Procesul executabil a fost terminat de semnalul: %d\n", WTERMSIG(status));
+            } else 
+            {
+                printf("Procesul executabil s-a terminat într-un mod neașteptat.\n");
+            }   
+        }
+    }
+
+    strcpy(task->fileNameOut, execName);
+    strcat(task->fileNameOut, "_out");
 }
-
 
 void waitForMessage(int socket_fd)
 {
@@ -430,21 +471,22 @@ void waitForMessage(int socket_fd)
     }
 
     
-    executeTask(task);
+    executeTask(task, socket_fd);
+    sendOutToServer(task, socket_fd);
     free(task);
-
+    strcpy(buffer, "\0");
+    ok=0;
 }
-
-//functie trimitere task
-
-//functie trimitere raspuns catre server
 
 int main(int argc, char* argv[]) 
 {
     int socket_fd=createSocket();
     struct sockaddr_in *server_addr = NULL;
     connectToServer(socket_fd, server_addr, argv);
-    waitForMessage(socket_fd);
+    while(1)
+    {
+        waitForMessage(socket_fd);
+    }
 
     close(socket_fd);
     free(server_addr);

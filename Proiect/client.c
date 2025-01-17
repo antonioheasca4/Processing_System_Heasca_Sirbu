@@ -124,8 +124,10 @@ void sendFile(int socketfd, char* argv[])
     char buffer[BUFFER_SIZE];
 
     char fileName[30];
-    strcpy(fileName, argv[2]);
-    int fd = open(argv[2],O_RDONLY);
+    strcpy(fileName, "file");
+    // strcpy(fileName, argv[2]);
+    // int fd = open(argv[2],O_RDONLY);
+    int fd = open(fileName,O_RDONLY);
     if(fd == -1)
     {
         perror("open");
@@ -150,6 +152,9 @@ void sendFile(int socketfd, char* argv[])
                 exit(EXIT_FAILURE);
             }
         }
+
+        rc = send(socketfd, "OK", 3, 0);
+        
     }
     else
     {
@@ -166,16 +171,22 @@ void receiveResponseFromServer(int socket)
     char buffer[BUFFER_SIZE];
     int bytes_recv;
     
-
+    int ok=1;
     while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,0)) > 0)
     {
-    
-        rc = write(STDOUT_FILENO,buffer,bytes_recv);
+        if(strstr(buffer,"GATA"))
+        {
+            //buffer[strlen(buffer) - 4] = '\0';
+            ok = 0;
+        }
+        rc = write(STDOUT_FILENO,buffer,bytes_recv - 5);
         if(rc == -1)
         {
             perror("write in receiveResponseFromServer");
             exit(EXIT_FAILURE);
         }
+        
+        if(ok==0) break;
     }
 }
 
@@ -188,6 +199,7 @@ int main(int argc,char* argv[])
     printf("%s\n",argv[2]);
     sendTask(socketfd,argc,argv);
     sendFile(socketfd, argv);
+    receiveResponseFromServer(socketfd);
     
     close(socketfd);
 

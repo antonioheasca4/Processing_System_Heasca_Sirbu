@@ -44,6 +44,7 @@ typedef struct Task
     //de completat
     struct Task *next;
     int isReady;
+    char fileOut[BUFFER_SIZE];
 }Task;
 
 typedef struct Agent
@@ -112,7 +113,6 @@ void enqueue(TaskQueue *queue, Task* task)
     pthread_mutex_unlock(&queue->lock);
 }
 
-
 void parseBuffer(Task* task,char* buffer)
 {
     char* p = strtok(buffer," ");
@@ -166,8 +166,15 @@ int receiveDataFile(int socket,char* filename,int id)
         exit(EXIT_FAILURE);
     }
 
+    int ok=1;
     while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,0)) > 0)
     {
+        if(strstr(buffer, "OK") == 0)
+        {
+            //buffer[strlen(buffer) - 2] = 0;
+            ok=0;
+        }
+
         dimFile += bytes_recv;
         rc = write(fd,buffer,bytes_recv);
         if(rc == -1)
@@ -175,6 +182,8 @@ int receiveDataFile(int socket,char* filename,int id)
             perror("write in receiveDataFIle");
              exit(EXIT_FAILURE);
         }
+
+        if(ok == 0) break;
     }
     close(fd);
     return dimFile;
@@ -234,8 +243,31 @@ void freeTask(Task *task)
     }
 }
 
+void dequeTask(Task* task)
+{
+    Task* prevTask= taskQueue.front;
+    Task* currentTask=taskQueue.front;
+
+    while(currentTask!=task)
+    {
+        prevTask=currentTask;
+        currentTask=currentTask->next;
+    }
+
+    if(prevTask==currentTask)
+    {
+        taskQueue.front=currentTask->next;
+    }
+    else
+    {
+        prevTask->next=currentTask->next;
+        freeTask(currentTask);
+    }
+}
+
 void sendFileToAgent(Task* task)
 {
+
     char buffer[BUFFER_SIZE];
 
     char fileName[30];
@@ -294,6 +326,75 @@ void sendArgsToAgent(Task* task)
 
 }
 
+void  sendOutToClient(Task* task)
+{
+    char buffer[BUFFER_SIZE ];
+    int fd = open(task->fileOut,O_RDONLY);
+    if(fd == -1)
+    {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+
+    int bytes_read, rc2;
+    strcpy(buffer,"\0");
+    while((bytes_read = read(fd,buffer,BUFFER_SIZE)) > 0)
+    {
+        rc2 = send(task->client->socketfd,buffer,bytes_read,0);
+        if(rc2 == -1)
+        {
+            perror("send in sendOutToServer.\n");
+            exit(EXIT_FAILURE);
+        }
+    }   
+    rc2 = send(task->client->socketfd,"GATA",5,0);
+    dequeTask(task);
+}
+
+void receiveOutFromAgent(Task* task)
+{
+    printf("Am primit DATA_OUT.\n");
+
+
+    char fileLocal[100];
+    strcpy(fileLocal, task->fileName);
+    strcat(fileLocal, "_out1");
+
+    int fd = open(fileLocal,O_CREAT | O_RDWR ,0755);
+    if(fd == -1)
+    {
+        perror("open in receiveDataFIle");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("S-a creat/deschis fisierul: %s\n", fileLocal);
+
+    int bytes_recv, ok=0;;
+    char buffer[BUFFER_SIZE];
+    while((bytes_recv = recv(task->agent->socketfd,buffer,BUFFER_SIZE,0)) > 0)
+    {
+        if(strstr(buffer, "OK"))
+        {
+            ok=1;
+        }
+        int rc = write(fd,buffer,bytes_recv-3);
+        if(rc == -1)
+        {
+            perror("write in receiveDataFIle");
+            exit(EXIT_FAILURE);
+        }
+
+        if(ok==1)   break;
+    }
+
+    strcpy(task->fileOut, fileLocal);
+
+    sendOutToClient(task);
+    task->agent->isBusy=0;
+
+    close(fd);
+}
+
 void sendTaskToAgent(Task* task)
 {
     int socket_fd=task->agent->socketfd;
@@ -343,11 +444,12 @@ void sendTaskToAgent(Task* task)
         }
         else
         {
-            // sendArgsToAgent(task);
+            
             sendFileToAgent(task);
         }
-        
     }
+
+    receiveOutFromAgent(task);    
 }
 
 void assignTaskToAgent(Task *task)
@@ -607,7 +709,6 @@ void processAgentResult(Agent *agent)
            agent->idAgent, agent->task->client->idClient);
 }
 
-
 void initThreadClientPool(ThreadPool *pool, TaskQueue* queue, void (*process_task)(void *),int serverSocket)
 {
     pool->queue = queue;
@@ -659,7 +760,6 @@ void initThreadAgentPool(ThreadPool *pool, AgentQueue* queue, void (*process_Age
         pthread_create(&pool->threads[i], NULL, workerAgent, pool);
     }
 }
-
 
 void sendResponseToClient(Task *task, const char *result) 
 {
