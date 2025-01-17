@@ -28,7 +28,6 @@ typedef struct Client
 {
     int idClient;
     int isWaiting;
-    //de completat
     int socketfd;
 }Client;
 
@@ -45,6 +44,7 @@ typedef struct Task
     struct Task *next;
     int isReady;
     char fileOut[BUFFER_SIZE];
+    int alocated;
 }Task;
 
 typedef struct Agent
@@ -137,6 +137,8 @@ void parseBuffer(Task* task,char* buffer)
         task->args[contor++] = argument;
         p = strtok(NULL," ");
     }
+
+    task->alocated=0;
 }
 
 int receiveDataFile(int socket,char* filename,int id)
@@ -377,7 +379,7 @@ void receiveOutFromAgent(Task* task)
         {
             ok=1;
         }
-        int rc = write(fd,buffer,bytes_recv-3);
+        int rc = write(fd,buffer,bytes_recv);
         if(rc == -1)
         {
             perror("write in receiveDataFIle");
@@ -462,10 +464,11 @@ void assignTaskToAgent(Task *task)
     {
         while(currentAgent!=NULL)
         {
-            if(currentAgent->isBusy==0 && currentAgent->taskType>=task->taskType)
+            if(currentAgent->isBusy==0 && currentAgent->taskType>=task->taskType && task->alocated==0)
             {
                 currentAgent->isBusy=1; 
                 task->agent=currentAgent;
+                task->alocated=1;
 
                 pthread_mutex_unlock(&agentQueue.lock);
 

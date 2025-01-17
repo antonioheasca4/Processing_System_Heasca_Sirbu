@@ -222,6 +222,7 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
     int dimFile = 0;
     int bytes_recv=0;
     
+
     while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,MSG_DONTWAIT)) > 0)
     {
         dimFile += bytes_recv;
@@ -235,6 +236,7 @@ int receiveDataFile(int socket,char* filename,int id, Task * task)
         
     strcpy(task->fileName, fileLocal);
     task->dimFile=dimFile;
+    strcpy(buffer, "");
 
     close(fd);
 }
@@ -425,7 +427,7 @@ void waitForMessage(int socket_fd)
         { 
             bytes_received = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
             buffer[bytes_received] = '\0'; 
-            printf("Agent %d: Message received: %s\n", socket_fd, buffer);
+            // printf("Agent %d: Message received: %s\n", socket_fd, buffer);
             
             if (strcmp(buffer, "ARGS") == 0) 
             {
@@ -458,10 +460,6 @@ void waitForMessage(int socket_fd)
                 ID++;
                 printf("Agent %d: Received data file.\n", socket_fd);
             } 
-            else 
-            {
-                printf("Agent %d: Unknown message: %s\n", socket_fd, buffer);
-            }
         }
     
     if (bytes_received == 0) {
@@ -483,10 +481,10 @@ int main(int argc, char* argv[])
     int socket_fd=createSocket();
     struct sockaddr_in *server_addr = NULL;
     connectToServer(socket_fd, server_addr, argv);
-    while(1)
-    {
+     while(1)
+     {
         waitForMessage(socket_fd);
-    }
+     }
 
     close(socket_fd);
     free(server_addr);

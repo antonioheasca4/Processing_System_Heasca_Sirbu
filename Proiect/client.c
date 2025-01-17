@@ -124,10 +124,10 @@ void sendFile(int socketfd, char* argv[])
     char buffer[BUFFER_SIZE];
 
     char fileName[30];
-    strcpy(fileName, "file");
-    // strcpy(fileName, argv[2]);
-    // int fd = open(argv[2],O_RDONLY);
-    int fd = open(fileName,O_RDONLY);
+    // strcpy(fileName, "file");
+    strcpy(fileName, argv[2]);
+    int fd = open(argv[2],O_RDONLY);
+    // int fd = open(fileName,O_RDONLY);
     if(fd == -1)
     {
         perror("open");
@@ -174,12 +174,12 @@ void receiveResponseFromServer(int socket)
     int ok=1;
     while((bytes_recv = recv(socket,buffer,BUFFER_SIZE,0)) > 0)
     {
-        if(strstr(buffer,"GATA"))
+        if(strstr(buffer,"GATA") || strstr(buffer,"OK") )
         {
             //buffer[strlen(buffer) - 4] = '\0';
             ok = 0;
         }
-        rc = write(STDOUT_FILENO,buffer,bytes_recv - 5);
+        rc = write(STDOUT_FILENO,buffer,bytes_recv-5);
         if(rc == -1)
         {
             perror("write in receiveResponseFromServer");
