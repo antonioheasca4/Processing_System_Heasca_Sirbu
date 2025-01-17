@@ -37,4 +37,13 @@ Avand in vedere ca server-ul trebuie sa gestioneze si clientii si agentii, am de
 -Am definit sablonul pe care ne-am propus sa il respectam in implementarea codului. Obs. Poate suferi modificari masive. :)  
 
 
+#Prezentare
+https://prezi.com/p/6_bpqup0elet/sistemele-de-procesare/
+
+#Comenzi
+Totul functioneaza in linie de comanda:
+- server : ./server
+- client : ./client <int: tip task 0-2> <numele fisierului ex: "file"> <int: lista argumente>
+- agent : ./agent <int: tip task 0-2> 
+
 
